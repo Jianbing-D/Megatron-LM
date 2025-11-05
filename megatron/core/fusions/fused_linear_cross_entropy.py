@@ -16,7 +16,7 @@ def _setup_platform():
     
     global forward_func, backward_func
     if cc[0] == 10:
-        import linear_cross_entropy.blackwell.entry as platform
+        from .linear_cross_entropy.blackwell import entry as platform
         forward_func = platform.forward
         backward_func = platform.backward
     else:

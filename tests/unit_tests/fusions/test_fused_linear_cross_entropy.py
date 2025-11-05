@@ -22,6 +22,7 @@ from tests.unit_tests.a2a_overlap.utils import (
 )
 from tests.unit_tests.test_utilities import Utils
 
+import os
 
 class MockDataset(Dataset):
     """
@@ -132,8 +133,11 @@ def init_gpt_dataloader(
     return dataloader
 
 
-class TestFusedLinearCrossEntropy:
-
+@pytest.mark.skipif(
+    "WORLD_SIZE" not in os.environ or os.environ["WORLD_SIZE"] < "2",
+    reason="Requires torchrun with multiple GPUs"
+)
+class TestFusedLinearCrossEntropyOnGptModel:
     @pytest.mark.parametrize("fp8_flag", get_valid_fp8_flags())
     @pytest.mark.parametrize("mtp_layers", [0, 1])
     @pytest.mark.parametrize("dispatcher_type", get_valid_token_dispatcher_types())

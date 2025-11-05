@@ -8,10 +8,10 @@ import cutlass.cute as cute
 from cutlass.cute.runtime import from_dlpack
 import cuda.bindings.driver as cuda
 
-import linear_cross_entropy.utils as utils
-import linear_cross_entropy.blackwell.fwd_mainloop as fwd_mainloop
-import linear_cross_entropy.blackwell.bwd_partial_dlogits as bwd_partial_dlogits
-import linear_cross_entropy.blackwell.triton as triton_kernels
+import megatron.core.fusions.linear_cross_entropy.utils as utils
+import megatron.core.fusions.linear_cross_entropy.blackwell.fwd_mainloop as fwd_mainloop
+import megatron.core.fusions.linear_cross_entropy.blackwell.bwd_partial_dlogits as bwd_partial_dlogits
+import megatron.core.fusions.linear_cross_entropy.blackwell.triton as triton_kernels
 
 def forward(
     hidden: torch.Tensor,
