@@ -13,6 +13,11 @@ import megatron.core.fusions.linear_cross_entropy.blackwell.fwd_mainloop as fwd_
 import megatron.core.fusions.linear_cross_entropy.blackwell.bwd_partial_dlogits as bwd_partial_dlogits
 import megatron.core.fusions.linear_cross_entropy.blackwell.triton as triton_kernels
 
+# import linear_cross_entropy.utils as utils
+# import linear_cross_entropy.blackwell.fwd_mainloop as fwd_mainloop
+# import linear_cross_entropy.blackwell.bwd_partial_dlogits as bwd_partial_dlogits
+# import linear_cross_entropy.blackwell.triton as triton_kernels
+
 def forward(
     hidden: torch.Tensor,
     weight: torch.Tensor,
@@ -114,7 +119,7 @@ def forward(
 
     # VocabSize and Dim are fixed for a given model,
     # only the number of tokens can vary
-    key = str(vocab_size) + "_" + str(dim)
+    key = f"vocab_size:{vocab_size}+dim:{dim}+dtype:{hidden.dtype}"
     if forward._fwd_mainloop_kernels.get(key) is None:
         fwd_mainloop_kernel = fwd_mainloop.FwdMainLoop(
             vocab_per_split=vocab_per_split,
@@ -314,7 +319,7 @@ def backward(
         if not hasattr(backward, "_bwd_kernel"):
             backward._bwd_kernel = dict()
 
-        key = str(vocab_size) + "_" + str(dim) + "_" + str(REDUCTION)
+        key = f"vocab_size:{vocab_size}+dim:{dim}+reduction:{REDUCTION}+dtype:{hidden.dtype}"
         if backward._bwd_kernel.get(key) is None:
             bwd_kernel = bwd_partial_dlogits.BwdPartialDlogits(
                 reduction=REDUCTION,

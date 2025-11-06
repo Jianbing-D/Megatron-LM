@@ -560,12 +560,22 @@ class BwdPartialDlogits:
             for elem in cutlass.range(cute.size(tR2GCAcc_pred, mode=[0])):
                 for row in cutlass.range(cute.size(tR2GCAcc_pred, mode=[1])):
                     for col in cutlass.range(cute.size(tR2GCAcc_pred, mode=[2])):
+                        # tR2GCAcc_pred[elem, row, col] = cute.elem_less(
+                        #     pidm * self.epi_tile[0] + tR2GCAcc[elem, row, col][0],
+                        #     cute.size(mDlogits_partial, mode=[0])
+                        # ) and cute.elem_less(
+                        #     pidn * self.epi_tile[1] + tR2GCAcc[elem, row, col][1],
+                        #     cute.size(mDlogits_partial, mode=[1])
+                        # )
                         tR2GCAcc_pred[elem, row, col] = cute.elem_less(
-                            pidm * self.epi_tile[0] + tR2GCAcc[elem, row, col][0],
-                            cute.size(mDlogits_partial, mode=[0])
+                            pidm * self.epi_tile[0]
+                            + tR2GCAcc[elem, row, col][0],
+                            problem_mnk[0]
                         ) and cute.elem_less(
-                            pidn * self.epi_tile[1] + tR2GCAcc[elem, row, col][1],
-                            cute.size(mDlogits_partial, mode=[1])
+                            split_idx * self.vocab_per_split
+                            + pidn * self.epi_tile[1]
+                            + tR2GCAcc[elem, row, col][1],
+                            problem_mnk[1]
                         )
 
             tR2GgDlogits = thr_copy_r2g.partition_D(gDlogits_partial)
@@ -582,7 +592,26 @@ class BwdPartialDlogits:
             dLogits_half = cute.group_modes(dLogits_half, 2, cute.rank(dLogits_half))
 
             mma_pipeline.consumer_wait(mma_consumer_state)
-            for n_subtile in cutlass.range(self.num_epi_stage_per_tile):
+
+            block_vocab_left_idx: cutlass.Int64 = (
+                split_idx * self.vocab_per_split
+                + pidn * self.epi_tile[1]
+            )
+            block_vocab_right_idx: cutlass.Int64 = (
+                min(
+                    split_idx * self.vocab_per_split
+                    + (pidn + 1) * self.epi_tile[1],
+                    min(
+                        (split_idx + 1) * self.vocab_per_split,
+                        problem_mnk[1]
+                    )
+                )
+            )
+            num_n_subtiles: cutlass.Int64 = cute.ceil_div(
+                (block_vocab_right_idx - block_vocab_left_idx),
+                cute.size(tTMEM_load_rAcc, mode=[0])
+            )
+            for n_subtile in cutlass.range(num_n_subtiles):
                 cute.copy(
                     tiled_copy_t2r,
                     tTMEM_load_tAcc[(None, None, None, n_subtile, mma_consumer_state.index)],

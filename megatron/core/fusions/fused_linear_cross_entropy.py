@@ -16,6 +16,7 @@ def _setup_platform():
     
     global forward_func, backward_func
     if cc[0] == 10:
+        # from linear_cross_entropy.blackwell import entry as platform
         from .linear_cross_entropy.blackwell import entry as platform
         forward_func = platform.forward
         backward_func = platform.backward
@@ -148,31 +149,32 @@ __all__ = [
 # FIXME: move this unit-test to other place
 if __name__ == "__main__":
     def test_dp():
-        batch = 4
-        seqlen = 2035
-        vocab_size = 152063
-        dim = 4096
-        # batch = 1
-        # seqlen = 16
-        # vocab_size = 512
-        # dim = 64
-        dtype = torch.bfloat16
-        reduction = "mean"
+        # batch = 4
+        # seqlen = 2035
+        # vocab_size = 152063
+        # dim = 4096
+        batch = 1
+        seqlen = 80
+        vocab_size = 125
+        dim = 64
+        dtype = torch.float16
+        reduction = "none"
 
         hidden = (
             torch.empty((batch, seqlen, dim), device="cuda", dtype=dtype)
-            .uniform_(-0.5, 0.5)
+            .uniform_(-0.1, 0.1)
             .requires_grad_()
         )
         weight = (
             torch.empty((vocab_size, dim), device="cuda", dtype=dtype)
-            .uniform_(-0.5, 0.5)
+            .uniform_(-0.1, 0.1)
             .requires_grad_()
         )
 
         labels = torch.randint(0, vocab_size, (batch, seqlen), device="cuda", dtype=torch.long)
 
         logits = hidden @ weight.T
+        # print(logits)
 
         _logits = logits.to(torch.float32)
         _logits_view = _logits.view(-1, _logits.shape[-1])
@@ -189,6 +191,9 @@ if __name__ == "__main__":
             hidden, weight, labels, 
             reduction=reduction,
         )
+
+        print(custom_logprobs)
+        print(logprobs)
 
         # backward
         g_logprobs = torch.rand_like(logprobs, dtype=dtype, device="cuda")
@@ -221,6 +226,7 @@ if __name__ == "__main__":
 
         d_logits += one_hot * -_g_logprobs.unsqueeze(-1)
         d_logits = d_logits.to(hidden.dtype)
+        # print(d_logits)
         
         d_hidden = d_logits @ weight
         d_weight = d_logits.T @ hidden.view(-1, dim)

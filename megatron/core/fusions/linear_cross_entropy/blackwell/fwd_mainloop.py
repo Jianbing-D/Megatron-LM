@@ -330,7 +330,9 @@ class FwdMainLoop:
         block_vocab_right_idx: cutlass.Int64 = (
             min((pidn + 1) * self.vocab_per_split, problem_mnk[1])
         )
-        num_n_tiles: cutlass.Int64 = cute.ceil_div((block_vocab_right_idx - block_vocab_left_idx), self.mma_tiler[1])
+        num_n_tiles: cutlass.Int64 = cute.ceil_div(
+            (block_vocab_right_idx - block_vocab_left_idx), 
+            self.mma_tiler[1])
 
         # ///////
         # empty
@@ -533,7 +535,18 @@ class FwdMainLoop:
             for n in cutlass.range(num_n_tiles):
                 mma_pipeline.consumer_wait(mma_consumer_state)
 
-                for n_subtile in cutlass.range(self.num_epi_stage_per_tile):
+                left: cutlass.Int64 = (
+                    block_vocab_left_idx + n * self.epi_tile[1]
+                )
+                right: cutlass.Int64 = (
+                    min((n + 1) * self.epi_tile[1] + block_vocab_left_idx, 
+                        block_vocab_right_idx)
+                )
+                num_n_subtiles: cutlass.Int64 = cute.ceil_div(
+                    (right - left),
+                    cute.size(tTMEM_load_rAcc, mode=[0])
+                )
+                for n_subtile in cutlass.range(num_n_subtiles):
                     cute.copy(
                         tiled_copy_t2r,
                         tTMEM_load_tAcc[(None, None, None, n_subtile, mma_consumer_state.index)],
@@ -541,21 +554,25 @@ class FwdMainLoop:
                     )
 
                     for idx in cutlass.range(cute.size(tTMEM_load_rAcc, mode=[0]), unroll_full=True):
-                        _max_old = tR2GrMax[0]
-                        tR2GrMax[0] = cute.arch.fmax(tR2GrMax[0], tTMEM_load_rAcc[idx])
-                        exp_logits = cute.exp(tTMEM_load_rAcc[idx] - tR2GrMax[0])
-                        coeff = cute.exp(_max_old - tR2GrMax[0])
-                        tR2GrAccu[0] = coeff * tR2GrAccu[0] + exp_logits
-
-                        position: cutlass.Int64 = (
-                            rank * problem_mnk[1]
-                            + pidn * self.vocab_per_split
-                            + n * self.epi_tile[1]
+                        local_position: cutlass.Int64 = (
+                            n * self.epi_tile[1]
                             + n_subtile * cute.size(tTMEM_load_rAcc, mode=[0])
                             + idx
                         )
-                        mask: cutlass.Boolean = valid_mask and (position == tLabelsrLabels[0])
-                        tR2GrLogprobs[0] += (mask * tTMEM_load_rAcc[idx])
+                        if (block_vocab_left_idx + local_position) < block_vocab_right_idx:
+                            _max_old = tR2GrMax[0]
+                            tR2GrMax[0] = cute.arch.fmax(tR2GrMax[0], tTMEM_load_rAcc[idx])
+                            exp_logits = cute.exp(tTMEM_load_rAcc[idx] - tR2GrMax[0])
+                            coeff = cute.exp(_max_old - tR2GrMax[0])
+                            tR2GrAccu[0] = coeff * tR2GrAccu[0] + exp_logits
+
+                            position: cutlass.Int64 = (
+                                rank * problem_mnk[1]
+                                + pidn * self.vocab_per_split
+                                + local_position
+                            )
+                            mask: cutlass.Boolean = valid_mask and (position == tLabelsrLabels[0])
+                            tR2GrLogprobs[0] += (mask * tTMEM_load_rAcc[idx])
 
                 mma_pipeline.consumer_release(mma_consumer_state)
                 mma_consumer_state.advance()
