@@ -51,6 +51,7 @@ def forward(
 
     tp_rank = 0 if tp_group is None else torch.distributed.get_rank(tp_group)
     tp_world_size = 1 if tp_group is None else torch.distributed.get_world_size(tp_group)
+    in_tp_mode = (tp_group is not None) and (tp_world_size > 1)
 
     if not hasattr(forward, "_initialized"):
         global _dedicated_stream, _dedicated_events
@@ -62,7 +63,7 @@ def forward(
     # declare logprobs
     if REDUCTION == utils.EntropyReductionEnum.kNone:
         logprobs = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
-        if tp_group is not None:
+        if in_tp_mode:
             logprobs.zero_()
     else:
         logprobs = torch.zeros((), device=hidden.device, dtype=torch.float32)
@@ -81,7 +82,7 @@ def forward(
         _logprobs = logprobs
     else:
         _logprobs = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
-        if tp_group is not None:
+        if in_tp_mode:
             _logprobs.zero_()
     assert _max.is_contiguous() and _accu.is_contiguous() and _logprobs.is_contiguous()
 
@@ -151,7 +152,7 @@ def forward(
         cuda_stream
     )
     
-    if tp_group is None:
+    if not in_tp_mode:
         def grid(meta):
             return (triton.cdiv(num_tokens, meta["BLOCK_SIZE_M"]),)
 
@@ -247,6 +248,8 @@ def backward(
     """
     backward host function
     """
+    in_tp_mode = (tp_group is not None) and (tp_world_size > 1)
+
     hidden_view = hidden.view(-1, hidden.shape[-1])
     labels_view = labels.view(-1)
 
@@ -337,6 +340,7 @@ def backward(
                 dlogits_packed,
                 scalarNumValidTokens_packed,
                 ignore_index,
+                tp_rank,
                 stream
             )
             backward._bwd_kernel[key] = bwd_kernel_compiled
@@ -355,6 +359,7 @@ def backward(
                 dlogits_packed,
                 scalarNumValidTokens_packed,
                 ignore_index,
+                tp_rank,
                 stream
             )
             vocab_right_bound = (
@@ -381,5 +386,8 @@ def backward(
             )
     else:
         raise NotImplementedError(f"Unsupported backward method: {_backward}")
+
+    if in_tp_mode:
+        dist.all_reduce(d_hidden, op=dist.ReduceOp.SUM, group=tp_group)
     
     return d_hidden, d_weight

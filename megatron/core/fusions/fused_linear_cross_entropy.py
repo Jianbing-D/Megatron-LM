@@ -46,12 +46,12 @@ class LinearCrossEntropy(torch.autograd.Function):
     ) -> torch.Tensor:
         """
         The forward pass of the Linear Cross Entropy.
-        If tp_group is not None, the weight tensor to each TP rank should be (vocab_size // world_size, dim).
+        If tp_group is not None, the weight tensor to each TP rank should be (global_vocab_size // world_size, dim).
         Note that each of the ranks should get equal shards along the vocab_size dimension.
 
         Args:
             @param hidden: the input tensor with shape (num_tokens, dim)
-            @param weight: the lm_head weight tensor with shape (vocab_size, dim)
+            @param weight: the lm_head weight tensor with shape (local_vocab_size, dim)
             @param labels: the labels tensor with shape (num_tokens,)
             @param tp_group: the distributed process group for TP.
             @param reduction: Default to "mean", and can be one of "none", "sum", "mean".
@@ -61,6 +61,33 @@ class LinearCrossEntropy(torch.autograd.Function):
                 - either (num_tokens,) when reduction is "none"
                 - or (1,) when reduction is "mean" or "sum"
 
+        When tp_group is not None, the weight tensor will be split along the vocab_size dimension, 
+        which means each rank will get equal shards along the global_vocab_size dimension.
+        Specifically, the weight tensor to each rank will be (local_vocab_size, dim). 
+        And there is an assumption that each rank will get the same local_vocab_size.
+
+        In TP forward pass, the hidden tensor and label tensor shall be identical among all TP ranks,
+        and it's user's responsibility to ensure the hidden tensor is identical among all TP ranks.
+        Then this operation will produce identical logprobs among all TP ranks.
+
+        In TP backward pass, the gradient of the logprobs shall be identical among all TP ranks,
+        and it's user's responsibility to ensure the gradient of the logprobs is identical among all TP ranks.
+        Then this operation will produce distinct gradients for the local weight tensor,
+        and identical gradients for the hidden tensor. 
+
+        ```python
+        # ------------ forward pass ------------ #
+        hidden = tp_group.broadcast(hidden, src=0) # handled by framework
+        labels = tp_group.broadcast(labels, src=0) # handled by framework
+        logprobs = linear_cross_entropy(...)
+        # each rank will get the same logprobs
+
+        # ------------ backward pass ------------ #
+        g_logprobs = tp_group.broadcast(g_logprobs, src=0) # handled by framework
+        d_hidden, d_weight = torch.autograd.grad(...)
+        # each rank will get the same d_hidden, 
+        # and distinct d_weight for local weight shard
+        ```
         """
         with torch.cuda.nvtx.range("LinearCrossEntropy-forward"):
             logprobs, _maximum, _acc, _num_valid_tokens, tp_rank, tp_world_size = (
