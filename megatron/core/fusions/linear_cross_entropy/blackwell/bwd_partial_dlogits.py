@@ -532,7 +532,7 @@ class BwdPartialDlogits:
         if cutlass.const_expr((problem_mnk[2] * a_dtype.width // 8) % 16 != 0):
             raise RuntimeError(f"K dimension is not 16B aligned: {problem_mnk[2]}")
         if cutlass.const_expr((problem_mnk[2] * b_dtype.width // 8) % 128 != 0):
-            raise RuntimeError(f"N dimension is not 128B aligned: {problem_mnk[1]}")
+            raise RuntimeError(f"K dimension is not 128B aligned: {problem_mnk[2]}")
 
         grid = self._compute_grid(
             problem_mnk=problem_mnk,
