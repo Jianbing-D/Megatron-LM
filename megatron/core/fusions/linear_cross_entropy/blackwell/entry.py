@@ -3,6 +3,7 @@
 import typing
 from dataclasses import dataclass, field
 from functools import lru_cache
+import os
 
 import cuda.bindings.driver as cuda  # type: ignore
 import cutlass
@@ -30,6 +31,7 @@ class FwdConfig:
     _dedicated_events: typing.List[torch.cuda.Event] = field(default_factory=list)
     _initialized: bool = field(default=False)
     _fwd_mainloop_kernels: typing.Dict[str, cute.kernel] = field(default_factory=dict)
+    _vocab_per_split: int = field(default=int(os.environ.get("LCE_FWD_VOCAB_SPLIT_SIZE", 512 * 6)))
 
 
 @dataclass
@@ -39,6 +41,8 @@ class BwdConfig:
     """
 
     _bwd_kernel: typing.Dict[str, cute.kernel] = field(default_factory=dict)
+    _vocab_per_split: int = field(default=int(os.environ.get("LCE_BWD_VOCAB_SPLIT_SIZE", 512 * 6)))
+    _backward_method: utils.BackwardMethodEnum = field(default=utils.BackwardMethodEnum.kDlogitsSplitN)
 
 
 @lru_cache(maxsize=1)
@@ -124,8 +128,7 @@ def forward(
     )
     # declare intermediate tensors
     # NOTE: this is a parameter for tuning
-    vocab_per_split = 512 * 6
-    num_splits = (vocab_size + vocab_per_split - 1) // vocab_per_split
+    num_splits = (vocab_size + _get_fwd_config()._vocab_per_split - 1) // _get_fwd_config()._vocab_per_split
     _max = torch.empty((num_tokens, num_splits), device=hidden.device, dtype=torch.float32)
     _accu = torch.empty((num_tokens, num_splits), device=hidden.device, dtype=torch.float32)
     if REDUCTION == utils.EntropyReductionEnum.kNone:
@@ -161,7 +164,7 @@ def forward(
     # only the number of tokens can vary
     key = f"vocab_size:{vocab_size}+dim:{dim}+dtype:{hidden_view.dtype}"
     if _get_fwd_config()._fwd_mainloop_kernels.get(key) is None:
-        fwd_mainloop_kernel = fwd_mainloop.FwdMainLoop(vocab_per_split=vocab_per_split)
+        fwd_mainloop_kernel = fwd_mainloop.FwdMainLoop(vocab_per_split=_get_fwd_config()._vocab_per_split)
         fwd_mainloop_compiled_kernel = cute.compile(
             fwd_mainloop_kernel,
             hidden_packed,
@@ -314,9 +317,9 @@ def backward(
     assert d_hidden.is_contiguous() and d_weight.is_contiguous()
 
     # FIXME: implement different backward methods
-    _backward = utils.BackwardMethodEnum.kDlogitsSplitN
-    if _backward == utils.BackwardMethodEnum.kDlogitsSplitN:
-        vocab_per_split = 512 * 6
+    _backward_method = _get_bwd_config()._backward_method
+    if _backward_method == utils.BackwardMethodEnum.kDlogitsSplitN:
+        vocab_per_split = _get_bwd_config()._vocab_per_split
         num_splits = (vocab_size + vocab_per_split - 1) // vocab_per_split
 
         _d_logits = torch.empty(
@@ -405,7 +408,7 @@ def backward(
                 out=d_weight[split_idx * vocab_per_split : (split_idx + 1) * vocab_per_split, :],
             )
     else:
-        raise NotImplementedError(f"Unsupported backward method: {_backward}")
+        raise NotImplementedError(f"Unsupported backward method: {_backward_method}")
 
     if in_tp_mode:
         dist.all_reduce(d_hidden, op=dist.ReduceOp.SUM, group=tp_group)
