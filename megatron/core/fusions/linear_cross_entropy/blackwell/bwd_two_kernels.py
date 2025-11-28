@@ -1187,10 +1187,12 @@ if __name__ == "__main__":
     hidden = (
         torch.empty((batchsize, seqlen, dim), dtype=dtype, device="cuda")
         .uniform_(-0.1, 0.1)
+        .requires_grad_(True)
     )
     weight = (
         torch.empty((vocabsize, dim), dtype=dtype, device="cuda")
         .uniform_(-0.1, 0.1)
+        .requires_grad_(True)
     )
     # hidden = torch.ones((batchsize, seqlen, dim), dtype=dtype, device="cuda")
     # weight = torch.ones((vocabsize, dim), dtype=dtype, device="cuda")
@@ -1280,6 +1282,10 @@ if __name__ == "__main__":
         # options="--generate-line-info"
     )
 
+    start = torch.cuda.Event(enable_timing=True)
+    stop = torch.cuda.Event(enable_timing=True)
+
+    start.record(stream=torch.cuda.current_stream())
     dHidden_kernel_compiled(
         hidden_packed,
         weight_packed,
@@ -1293,6 +1299,10 @@ if __name__ == "__main__":
         rank,
         stream
     )
+    stop.record(stream=torch.cuda.current_stream())
+    torch.cuda.synchronize()
+    elapsed_time = start.elapsed_time(stop)
+    print(f"[INFO]: Kernel elapsed time: {elapsed_time:.4f} ms")
 
     def torch_backward(
         hidden: torch.Tensor,
@@ -1318,9 +1328,45 @@ if __name__ == "__main__":
         d_weight = d_logits.T @ hidden.view(-1, dim)
         return d_hidden.view(hidden.shape), d_weight.view(weight.shape)
 
+    start.record(stream=torch.cuda.current_stream())
     torch_d_hidden, torch_d_weight = torch_backward(hidden, weight, labels, dlogprobs, reduction, num_valid_tokens)
+    stop.record(stream=torch.cuda.current_stream())
+    torch.cuda.synchronize()
+    elapsed_time = start.elapsed_time(stop)
+    print(f"[INFO]: Torch backward elapsed time: {elapsed_time:.4f} ms")
     # print("torch_d_hidden:\n", torch_d_hidden)
     # print("kernel_d_hidden:\n", dHidden)
-
     torch.testing.assert_close(dHidden, torch_d_hidden)
-    print("[PASSED] dHidden is close to that of PyTorch")
+    print("[PASSED] dHidden is close to that of PyTorch Operation")
+
+    def torch_native_backward(
+        hidden: torch.Tensor,
+        weight: torch.Tensor,
+        labels: torch.Tensor,
+        dlogprobs: torch.Tensor,
+        reduction: str,
+        start: torch.cuda.Event,
+        stop: torch.cuda.Event,
+    ):
+        start.record(stream=torch.cuda.current_stream())
+        logits = hidden.to(torch.float32) @ weight.to(torch.float32).T
+        logits_view = logits.view(-1, weight.shape[0])
+        ce = torch.nn.functional.cross_entropy(logits_view, labels.view(-1), reduction=reduction)
+        stop.record(stream=torch.cuda.current_stream())
+        torch.cuda.synchronize()
+
+        elapsed_time = start.elapsed_time(stop)
+        print(f"[INFO]: Torch native forward elapsed time: {elapsed_time:.4f} ms")
+
+        start.record(stream=torch.cuda.current_stream())
+        d_hidden, d_weight = torch.autograd.grad((ce,), (hidden, weight), (dlogprobs.view(ce.shape),), retain_graph=False)
+        stop.record(stream=torch.cuda.current_stream())
+        torch.cuda.synchronize()
+        elapsed_time = start.elapsed_time(stop)
+        print(f"[INFO]: Torch native backward elapsed time: {elapsed_time:.4f} ms")
+
+        return d_hidden.view(hidden.shape), d_weight.view(weight.shape)
+
+    d_hidden_native, d_weight_native = torch_native_backward(hidden, weight, labels, dlogprobs, reduction, start, stop)
+    torch.testing.assert_close(dHidden, d_hidden_native)
+    print("[PASSED] dHidden is close to that of PyTorch Native Operation")
