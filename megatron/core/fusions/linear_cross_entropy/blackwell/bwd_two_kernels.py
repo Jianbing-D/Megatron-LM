@@ -36,9 +36,10 @@ def next_power_of_two(n: int) -> int:
         return 1
     return 2 ** math.ceil(math.log2(n))
 
-class BwdTwoKernelsGradHidden:
+class BwdTwoKernelsGradHiddenTileMN:
     """
-    This class includes two separate kernels for dHidden.
+    This class includes separate kernels for dHidden.
+    Split tiles along M and N dimensions of dHidden.
     """
     def __init__(
         self,
@@ -1262,7 +1263,7 @@ if __name__ == "__main__":
 
     stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)
 
-    dHidden_kernel = BwdTwoKernelsGradHidden(
+    dHidden_kernel = BwdTwoKernelsGradHiddenTileMN(
         reduction=str_to_reduction_enum(reduction),
     )
 
