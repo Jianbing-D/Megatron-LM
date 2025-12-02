@@ -32,6 +32,7 @@ class FwdConfig:
     _initialized: bool = field(default=False)
     _fwd_mainloop_kernels: typing.Dict[str, cute.kernel] = field(default_factory=dict)
     _vocab_per_split: int = field(default=int(os.environ.get("LCE_FWD_VOCAB_SPLIT_SIZE", 512 * 6)))
+    _use_2cta_instrs: bool = field(default=os.environ.get("LCE_FWD_USE_2CTA_INSTRS", "1") == "1")
 
 
 @dataclass
@@ -164,7 +165,10 @@ def forward(
     # only the number of tokens can vary
     key = f"vocab_size:{vocab_size}+dim:{dim}+dtype:{hidden_view.dtype}"
     if _get_fwd_config()._fwd_mainloop_kernels.get(key) is None:
-        fwd_mainloop_kernel = fwd_mainloop.FwdMainLoop(vocab_per_split=_get_fwd_config()._vocab_per_split)
+        fwd_mainloop_kernel = fwd_mainloop.FwdMainLoop(
+            vocab_per_split=_get_fwd_config()._vocab_per_split,
+            use_2cta_instrs=_get_fwd_config()._use_2cta_instrs,
+        )
         fwd_mainloop_compiled_kernel = cute.compile(
             fwd_mainloop_kernel,
             hidden_packed,

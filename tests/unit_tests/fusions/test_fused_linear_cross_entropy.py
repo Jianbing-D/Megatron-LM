@@ -322,12 +322,14 @@ class TestFusedLinearCrossEntropyDataParallel:
             logprobs = linear_cross_entropy(
                 hidden, weight, labels, reduction=reduction, ignore_index=ignore_index
             )
+            torch.cuda.synchronize()
             assert not torch.isnan(logprobs).any()
 
             gLogprobs = torch.randn_like(logprobs)
             (d_hidden, d_weight) = torch.autograd.grad(
                 (logprobs,), (hidden, weight), (gLogprobs,), retain_graph=False
             )
+            torch.cuda.synchronize()
             assert not torch.isnan(d_hidden).any()
             assert not torch.isnan(d_weight).any()
 
