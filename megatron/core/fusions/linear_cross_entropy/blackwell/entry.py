@@ -44,6 +44,7 @@ class BwdConfig:
     _bwd_kernel: typing.Dict[str, cute.kernel] = field(default_factory=dict)
     _vocab_per_split: int = field(default=int(os.environ.get("LCE_BWD_VOCAB_SPLIT_SIZE", 512 * 6)))
     _backward_method: utils.BackwardMethodEnum = field(default=utils.BackwardMethodEnum.kDlogitsSplitN)
+    _use_2cta_instrs: bool = field(default=os.environ.get("LCE_BWD_USE_2CTA_INSTRS", "1") == "1")
 
 
 @lru_cache(maxsize=1)
@@ -354,7 +355,8 @@ def backward(
         key = f"vocab_size:{vocab_size}+dim:{dim}+reduction:{REDUCTION}+dtype:{hidden_view.dtype}"
         if _get_bwd_config()._bwd_kernel.get(key) is None:
             bwd_kernel = bwd_partial_dlogits.BwdPartialDlogits(
-                reduction=REDUCTION.value, vocab_per_split=vocab_per_split
+                reduction=REDUCTION.value, vocab_per_split=vocab_per_split,
+                use_2cta_instrs=_get_bwd_config()._use_2cta_instrs
             )
             bwd_kernel_compiled = cute.compile(
                 bwd_kernel,
